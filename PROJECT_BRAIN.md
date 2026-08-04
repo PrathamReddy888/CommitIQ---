@@ -59,6 +59,7 @@ Incomplete or fragile:
 
 ## Discovered issues
 - Medium: shutil.rmtree raised PermissionError on Windows when deleting read-only .git files; it now uses a custom onerror handler to clear the readonly bit.
+- Medium: commit author name/email could be None or empty for malformed commits (shallow-clone boundaries, VCS-imported histories, plumbing-created commits), crashing downstream Pydantic models and DB inserts. The commit walker now falls back to "Unknown" / "unknown@example.com" and logs the substitution (#266).
 - High: clone_service and router used synchronous subprocesses that blocked the FastAPI event loop; they are now fully asynchronous.
 - High: no deployment health gate; CI now exists for unit/e2e tests, lint, build, and repository hygiene checks on pushes and pull requests.
 - High: npm audit previously reported 9 frontend dependency vulnerabilities; dependency upgrades now leave `npm audit --audit-level=moderate` clean as of 2026-06-04.
