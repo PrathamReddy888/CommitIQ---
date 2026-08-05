@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import type { HotspotResponse } from '../types'
 import { HotspotMap } from './HotspotMap'
 
 // Mock SWR
@@ -18,6 +19,8 @@ vi.mock('recharts', () => ({
 import useSWR from 'swr'
 import { getHotspots } from '../lib/api'
 
+type SWRMockReturn = ReturnType<typeof useSWR<HotspotResponse, Error>>
+
 const mockUseSWR = vi.mocked(useSWR)
 const mockGetHotspots = vi.mocked(getHotspots)
 
@@ -27,6 +30,19 @@ const mockHotspots = [
   { file: 'src/utils.ts', complexity: 6.0, churn_count: 15, risk_score: 90.0, loc: 120 },
 ]
 
+function mockSWRReturnValue(
+  overrides: Partial<SWRMockReturn>,
+): SWRMockReturn {
+  return {
+    data: undefined,
+    error: undefined,
+    isLoading: false,
+    isValidating: false,
+    mutate: vi.fn(),
+    ...overrides,
+  } as SWRMockReturn
+}
+
 describe('HotspotMap', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -34,11 +50,11 @@ describe('HotspotMap', () => {
   })
 
   it('renders the hotspot table with all columns', async () => {
-    mockUseSWR.mockReturnValue({
-      data: { repo_id: 1, commit_sha: 'abc', hotspots: mockHotspots },
-      isLoading: false,
-      error: undefined,
-    } as any)
+    mockUseSWR.mockReturnValue(
+      mockSWRReturnValue({
+        data: { repo_id: 1, commit_sha: 'abc', hotspots: mockHotspots },
+      }),
+    )
 
     render(<HotspotMap repoId={1} />)
 
@@ -55,11 +71,11 @@ describe('HotspotMap', () => {
   })
 
   it('sorts by complexity descending by default (risk_score)', async () => {
-    mockUseSWR.mockReturnValue({
-      data: { repo_id: 1, commit_sha: 'abc', hotspots: mockHotspots },
-      isLoading: false,
-      error: undefined,
-    } as any)
+    mockUseSWR.mockReturnValue(
+      mockSWRReturnValue({
+        data: { repo_id: 1, commit_sha: 'abc', hotspots: mockHotspots },
+      }),
+    )
 
     const { container } = render(<HotspotMap repoId={1} />)
 
@@ -73,11 +89,11 @@ describe('HotspotMap', () => {
   })
 
   it('sorts by LOC when LOC header is clicked', async () => {
-    mockUseSWR.mockReturnValue({
-      data: { repo_id: 1, commit_sha: 'abc', hotspots: mockHotspots },
-      isLoading: false,
-      error: undefined,
-    } as any)
+    mockUseSWR.mockReturnValue(
+      mockSWRReturnValue({
+        data: { repo_id: 1, commit_sha: 'abc', hotspots: mockHotspots },
+      }),
+    )
 
     const { container } = render(<HotspotMap repoId={1} />)
 
@@ -96,11 +112,11 @@ describe('HotspotMap', () => {
   })
 
   it('toggles sort direction when clicking the same header twice', async () => {
-    mockUseSWR.mockReturnValue({
-      data: { repo_id: 1, commit_sha: 'abc', hotspots: mockHotspots },
-      isLoading: false,
-      error: undefined,
-    } as any)
+    mockUseSWR.mockReturnValue(
+      mockSWRReturnValue({
+        data: { repo_id: 1, commit_sha: 'abc', hotspots: mockHotspots },
+      }),
+    )
 
     const { container } = render(<HotspotMap repoId={1} />)
 
@@ -120,11 +136,11 @@ describe('HotspotMap', () => {
   })
 
   it('sorts by Churn when Churn header is clicked', async () => {
-    mockUseSWR.mockReturnValue({
-      data: { repo_id: 1, commit_sha: 'abc', hotspots: mockHotspots },
-      isLoading: false,
-      error: undefined,
-    } as any)
+    mockUseSWR.mockReturnValue(
+      mockSWRReturnValue({
+        data: { repo_id: 1, commit_sha: 'abc', hotspots: mockHotspots },
+      }),
+    )
 
     const { container } = render(<HotspotMap repoId={1} />)
 
@@ -141,22 +157,23 @@ describe('HotspotMap', () => {
   })
 
   it('shows empty state when no hotspots', () => {
-    mockUseSWR.mockReturnValue({
-      data: { repo_id: 1, commit_sha: 'abc', hotspots: [] },
-      isLoading: false,
-      error: undefined,
-    } as any)
+    mockUseSWR.mockReturnValue(
+      mockSWRReturnValue({
+        data: { repo_id: 1, commit_sha: 'abc', hotspots: [] },
+      }),
+    )
 
     render(<HotspotMap repoId={1} />)
     expect(screen.getByText(/No high-complexity churn hotspots found/i)).toBeInTheDocument()
   })
 
   it('shows loading state', () => {
-    mockUseSWR.mockReturnValue({
-      data: undefined,
-      isLoading: true,
-      error: undefined,
-    } as any)
+    mockUseSWR.mockReturnValue(
+      mockSWRReturnValue({
+        data: undefined,
+        isLoading: true,
+      }),
+    )
 
     render(<HotspotMap repoId={1} />)
     expect(screen.getByText(/Loading hotspots/i)).toBeInTheDocument()
