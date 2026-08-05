@@ -186,6 +186,7 @@ export interface HotspotEntry {
   complexity: number
   churn_count: number
   risk_score: number
+  loc?: number
 }
 
 export interface HotspotResponse {
