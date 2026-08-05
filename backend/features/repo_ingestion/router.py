@@ -994,6 +994,7 @@ async def get_hotspots(
                 "complexity": round(node.avg_complexity, 2),
                 "churn_count": churn_count,
                 "risk_score": round(risk_score, 1),
+                "loc": node.loc,
             }
         )
 
