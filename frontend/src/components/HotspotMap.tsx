@@ -2,7 +2,6 @@ import { useState, useMemo, useCallback } from 'react'
 import { ResponsiveContainer, Tooltip, Treemap } from 'recharts'
 import useSWR from 'swr'
 import { getHotspots } from '../lib/api'
-import type { HotspotEntry } from '../types'
 
 interface HotspotMapProps {
   repoId: string | number
@@ -95,7 +94,7 @@ export function HotspotMap({ repoId, sha, startDate, endDate }: HotspotMapProps)
     ['hotspots', repoId, sha, startDate, endDate],
     () => getHotspots(repoId, sha || undefined, startDate, endDate)
   )
-  const hotspots = hotspotState.data?.hotspots || []
+  const hotspots = useMemo(() => hotspotState.data?.hotspots || [], [hotspotState.data])
 
   // ── Sorting state ──────────────────────────────────────────────
   const [sortKey, setSortKey] = useState<SortKey>('risk_score')
@@ -113,14 +112,14 @@ export function HotspotMap({ repoId, sha, startDate, endDate }: HotspotMapProps)
   const sortedHotspots = useMemo(() => {
     const sorted = [...hotspots]
     sorted.sort((a, b) => {
-      let valA: string | number = a[sortKey]
-      let valB: string | number = b[sortKey]
+      const valA = a[sortKey]
+      const valB = b[sortKey]
       if (typeof valA === 'string' && typeof valB === 'string') {
         return sortDir === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA)
       }
-      valA = Number(valA) || 0
-      valB = Number(valB) || 0
-      return sortDir === 'asc' ? valA - valB : valB - valA
+      return sortDir === 'asc'
+        ? (Number(valA) || 0) - (Number(valB) || 0)
+        : (Number(valB) || 0) - (Number(valA) || 0)
     })
     return sorted
   }, [hotspots, sortKey, sortDir])
