@@ -1,4 +1,7 @@
+import hashlib
+import json
 import logging
+import os
 import re
 import subprocess
 from datetime import datetime, timezone
@@ -19,6 +22,59 @@ logger = logging.getLogger(__name__)
 # never breaks on missing identity data.
 DEFAULT_AUTHOR_NAME = "Unknown"
 DEFAULT_AUTHOR_EMAIL = "unknown@example.com"
+
+# ── Issue #263: Commit walk cache ───────────────────────────────────────────
+# Directory for on-disk JSON caches of parsed commit metadata.
+# Caches are keyed by repo_slug + commit_count so that rescans of the same
+# repo (with the same number of commits) skip the expensive git walk entirely.
+_CACHE_DIR = Path(os.getenv("COMMITIQ_CACHE_DIR", "/tmp/commitiq_cache"))
+_CACHE_TTL_SECONDS = 86400  # 24 hours
+
+
+def _cache_path(repo_path: Path, limit: int) -> Path:
+    """Return the cache file path for a given repo_path + limit.
+
+    The cache key is derived from the absolute repo_path and the commit
+    limit so that different repos (or different depth clones of the same
+    repo) get separate cache files.
+    """
+    key_str = f"{repo_path.resolve()}:{limit}"
+    key_hash = hashlib.sha256(key_str.encode()).hexdigest()[:16]
+    return _CACHE_DIR / f"commits_{key_hash}.json"
+
+
+def _cache_is_valid(path: Path) -> bool:
+    """Check if a cache file exists and is not older than _CACHE_TTL_SECONDS."""
+    if not path.exists():
+        return False
+    age = datetime.now().timestamp() - path.stat().st_mtime
+    return age < _CACHE_TTL_SECONDS
+
+
+def _load_cache(path: Path) -> list[dict] | None:
+    """Load commit metadata from a JSON cache file. Returns None on failure."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list) and all(isinstance(item, dict) for item in data):
+            logger.info("commit_walker: loaded %d commits from cache %s", len(data), path.name)
+            return data
+        logger.warning("commit_walker: cache %s has invalid format, ignoring", path.name)
+        return None
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("commit_walker: failed to load cache %s: %s", path.name, e)
+        return None
+
+
+def _save_cache(path: Path, commits: list[dict]) -> None:
+    """Save commit metadata to a JSON cache file."""
+    try:
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(commits, f)
+        logger.info("commit_walker: cached %d commits to %s", len(commits), path.name)
+    except OSError as e:
+        logger.warning("commit_walker: failed to write cache %s: %s", path.name, e)
 
 
 def _safe_str(value: str | None) -> str:
@@ -68,7 +124,7 @@ def sanitize_commit_message(message: str | None) -> str:
     return msg.strip()[:500]
 
 
-def walk_commits(repo_path: Path, limit: int = 150) -> Iterator[dict]:
+def _walk_commits_uncached(repo_path: Path, limit: int) -> Iterator[dict]:
     """
     Walk last `limit` commits from shallow clone.
     Yields commit metadata dicts. Does NOT checkout each commit
@@ -159,3 +215,39 @@ def walk_commits(repo_path: Path, limit: int = 150) -> Iterator[dict]:
             "index":         idx,
             "total":         total,
         }
+
+
+def walk_commits(repo_path: Path, limit: int = 150) -> Iterator[dict]:
+    """
+    Walk last `limit` commits from shallow clone, with on-disk caching
+    to avoid re-walking the git commit tree on rescans (issue #263).
+
+    On first call for a given (repo_path, limit) pair, the full commit
+    walk is performed and the results are cached as JSON on disk. On
+    subsequent calls within the TTL window (24 hours), the cached
+    results are loaded directly, skipping the expensive git walk.
+
+    Args:
+        repo_path: Path to the cloned git repository.
+        limit: Maximum number of commits to walk.
+
+    Yields:
+        Commit metadata dicts (same format as _walk_commits_uncached).
+    """
+    cpath = _cache_path(repo_path, limit)
+
+    # Issue #263: Try to load from cache first
+    if _cache_is_valid(cpath):
+        cached = _load_cache(cpath)
+        if cached is not None:
+            yield from cached
+            return
+
+    # Cache miss or invalid — walk the git tree
+    commits = list(_walk_commits_uncached(repo_path, limit))
+
+    # Save to cache for future rescans
+    if commits:
+        _save_cache(cpath, commits)
+
+    yield from commits
