@@ -22,6 +22,7 @@ from backend.features.repo_ingestion.clone_service import (
 )
 from backend.features.repo_ingestion.graph_builder import (
     build_cochange_edges,
+    extract_go_imports,
     extract_js_imports,
     extract_python_imports,
     get_top_files_by_frequency,
