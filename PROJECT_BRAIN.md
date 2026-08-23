@@ -258,3 +258,25 @@ Missing but obviously needed:
 - Refactored git blame to catch TimeoutExpired and rmtree to handle Windows permission errors in backend.
 - feat: add Go import extraction and TypeScript path alias resolution (#348). Extended `graph_builder.py` with `extract_go_imports()` for single-line (`import "fmt"`) and grouped-block (`import ( ... )`) Go imports, including aliased (`f "fmt"`), blank-identifier (`_ "image/png"`), and dot (`. "math"`) forms. Commented-out imports are stripped via `_strip_go_comments()`. Extended `resolve_import_to_file()` to handle TypeScript path aliases (`@/`, `~/`, `#/`, `@@/`) by stripping the prefix and matching against `src/`, `app/`, `lib/`, `packages/`, and project root. Added Go package-path resolution by matching progressively shorter suffixes of the import path against repo directory structures. Updated `build_import_edges()` to dispatch `.go` files. Added 18 unit tests covering Go extraction, alias resolution, Go path resolution, and regression guards for existing relative-import behavior.
 - docs: update project brain after Go import extraction and TS alias resolution (#348). Recorded the new `extract_go_imports` function, extended `resolve_import_to_file` with alias and Go path support, `build_import_edges` `.go` dispatch, and 18-test coverage.
+
+Scheduled metric refresh (Issue #387)
+A background scheduler now automatically re-ingests active repositoriesto keep dashboards fresh.
+
+Implementation:
+
+backend/scheduler.py wraps APScheduler's AsyncIOScheduler, whichintegrates natively with FastAPI's asyncio event loop — no separateCelery worker or Redis broker required (though Redis is availablefor future use).
+The scheduler starts on FastAPI lifespan startup (main.py) andshuts down cleanly on lifespan exit.
+On each tick (every REFRESH_INTERVAL_HOURS, default 24), thescheduler queries all repos whose status is "ready" and whoselast_updated_at is older than the refresh interval (or NULL).
+For each eligible repo (capped at 25 per tick to avoidrate-limiting), it creates an AnalysisJob withtriggered_by="scheduler" and launches run_rescan — reusing theexact same analysis pipeline as the manualPOST /api/repos/{repo_id}/rescan endpoint.
+Repos are staggered by 10 seconds to avoid GitHub API rate-limitbursts.
+Configuration:
+
+REFRESH_INTERVAL_HOURS env var (default 24). Set to 0 todisable the scheduler entirely.
+backend/requirements.txt now includes apscheduler>=3.10.0.
+Testing:
+
+backend/tests/test_scheduler.py covers: scheduler lifecycle(start/stop/disabled), repo eligibility (old/recent/null/non-ready),refresh_all_due_repos (empty, DB error, multi-repo refresh),_refresh_single_repo (skip active, launch rescan, exceptionhandling).
+The scheduler's internal job calls run_rescan with its own DBsession, so no long-lived transactions are held between ticks.
+Health endpoint:
+
+GET /health now includes a scheduler key with{ running, enabled, jobs: [{ id, name, next_run_time }] } sooperators can verify the scheduler is active via a single curl.
