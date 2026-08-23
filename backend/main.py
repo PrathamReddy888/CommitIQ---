@@ -1,9 +1,8 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-import logging
 
 from backend.config import CORS_ORIGINS, ENVIRONMENT
 from backend.database import AsyncSessionLocal, engine, init_db
@@ -12,6 +11,7 @@ from backend.features.llm_analysis.router import router as llm_router
 from backend.features.metrics.router import router as metrics_router
 from backend.features.repo_ingestion.router import router as ingestion_router
 from backend.features.webhooks.router import router as webhooks_router
+from backend.scheduler import start_scheduler, stop_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,9 @@ async def lifespan(app: FastAPI):
             await seed_demo_data_if_empty(session)
         except Exception as exc:
             logger.error("Failed to auto-seed demo data: %s", exc, exc_info=True)
+    start_scheduler()
     yield
+    stop_scheduler()
     await engine.dispose()
 
 
@@ -50,4 +52,10 @@ app.include_router(webhooks_router, prefix="/api/webhooks", tags=["webhooks"])
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "commitiq-api"}
+    from backend.scheduler import get_scheduler_status
+
+    return {
+        "status": "ok",
+        "service": "commitiq-api",
+        "scheduler": get_scheduler_status(),
+    }
