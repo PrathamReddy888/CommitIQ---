@@ -18,11 +18,10 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-
 from backend.database import Base
 from backend.shared.models import Repo
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
 
@@ -30,41 +29,6 @@ pytestmark = pytest.mark.anyio
 @pytest.fixture()
 def anyio_backend():
     return "asyncio"
-
-
-class SyncSessionAdapter:
-    """Adapt a synchronous session to the async interface expected
-    by the scheduler."""
-
-    def __init__(self, session: Session):
-        self.session = session
-
-    async def execute(self, *args, **kwargs):
-        return self.session.execute(*args, **kwargs)
-
-    async def get(self, entity, ident):
-        return self.session.get(entity, ident)
-
-    def add(self, instance):
-        self.session.add(instance)
-
-    async def flush(self):
-        self.session.flush()
-
-    async def commit(self):
-        self.session.commit()
-
-    async def refresh(self, instance):
-        self.session.refresh(instance)
-
-    async def rollback(self):
-        self.session.rollback()
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *args):
-        pass
 
 
 @pytest.fixture()
@@ -98,6 +62,21 @@ def _make_repo(
     db.commit()
     db.refresh(repo)
     return repo
+
+
+def _setup_session_mock(mock_factory: MagicMock) -> AsyncMock:
+    """Configure a patched AsyncSessionLocal to return a mock session.
+
+    The key: ``mock_factory.return_value = mock_session`` ensures that
+    ``AsyncSessionLocal()`` returns our mock, and
+    ``mock_session.__aenter__`` returns the same mock for the
+    ``async with ... as db`` protocol.
+    """
+    mock_session = AsyncMock()
+    mock_factory.return_value = mock_session
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=None)
+    return mock_session
 
 
 # ════════════════════════════════════════════════════════════════
@@ -183,11 +162,10 @@ class TestRefreshAllDueRepos:
     @pytest.mark.asyncio
     async def test_refresh_all_returns_empty_when_no_repos(self):
         """refresh_all_due_repos returns zeros when no repos exist."""
-        with patch("backend.scheduler.AsyncSessionLocal"):
-            mock_session = AsyncMock()
-            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session.__aexit__ = AsyncMock(return_value=None)
-            # Return empty list from the query
+        with patch("backend.scheduler.AsyncSessionLocal") as mock_factory:
+            mock_session = _setup_session_mock(mock_factory)
+
+            # execute returns a result whose .scalars().all() is []
             mock_result = MagicMock()
             mock_result.scalars.return_value.all.return_value = []
             mock_session.execute = AsyncMock(return_value=mock_result)
@@ -195,25 +173,35 @@ class TestRefreshAllDueRepos:
             from backend.scheduler import refresh_all_due_repos
 
             result = await refresh_all_due_repos()
-            assert result == {"checked": 0, "refreshed": 0, "skipped": 0, "errors": 0}
+            assert result == {
+                "checked": 0,
+                "refreshed": 0,
+                "skipped": 0,
+                "errors": 0,
+            }
 
     @pytest.mark.asyncio
     async def test_refresh_all_handles_db_error(self):
         """refresh_all_due_repos returns error count on DB failure."""
-        with patch("backend.scheduler.AsyncSessionLocal"):
-            mock_session = AsyncMock()
-            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session.__aexit__ = AsyncMock(return_value=None)
-            from sqlalchemy.exc import OperationalError
+        from sqlalchemy.exc import OperationalError
 
+        with patch("backend.scheduler.AsyncSessionLocal") as mock_factory:
+            mock_session = _setup_session_mock(mock_factory)
             mock_session.execute = AsyncMock(
-                side_effect=OperationalError("SELECT 1", {}, Exception("DB down"))
+                side_effect=OperationalError(
+                    "SELECT 1", {}, Exception("DB down")
+                )
             )
 
             from backend.scheduler import refresh_all_due_repos
 
             result = await refresh_all_due_repos()
-            assert result == {"checked": 0, "refreshed": 0, "skipped": 0, "errors": 1}
+            assert result == {
+                "checked": 0,
+                "refreshed": 0,
+                "skipped": 0,
+                "errors": 1,
+            }
 
     @pytest.mark.asyncio
     async def test_refresh_all_refreshes_due_repos(self):
@@ -221,22 +209,24 @@ class TestRefreshAllDueRepos:
         mock_repo_1 = MagicMock(id=1, repo_slug="a/b")
         mock_repo_2 = MagicMock(id=2, repo_slug="c/d")
 
-        with patch("backend.scheduler.AsyncSessionLocal"):
-            mock_session = AsyncMock()
-            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session.__aexit__ = AsyncMock(return_value=None)
+        with patch("backend.scheduler.AsyncSessionLocal") as mock_factory:
+            mock_session = _setup_session_mock(mock_factory)
+
             mock_result = MagicMock()
-            mock_result.scalars.return_value.all.return_value = [mock_repo_1, mock_repo_2]
+            mock_result.scalars.return_value.all.return_value = [
+                mock_repo_1,
+                mock_repo_2,
+            ]
             mock_session.execute = AsyncMock(return_value=mock_result)
 
             with patch(
                 "backend.scheduler._refresh_single_repo",
                 new_callable=AsyncMock,
             ) as mock_refresh:
-                from backend.scheduler import refresh_all_due_repos
-
                 # Patch STAGGER_SECONDS to 0 so the test doesn't sleep.
                 with patch("backend.scheduler.STAGGER_SECONDS", 0):
+                    from backend.scheduler import refresh_all_due_repos
+
                     result = await refresh_all_due_repos()
 
                 assert mock_refresh.call_count == 2
@@ -257,10 +247,8 @@ class TestRefreshSingleRepo:
         mock_repo = MagicMock(id=1, repo_slug="a/b", max_commits_setting=100)
         mock_active_job = MagicMock(id=42, status="analyzing")
 
-        with patch("backend.scheduler.AsyncSessionLocal"):
-            mock_session = AsyncMock()
-            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session.__aexit__ = AsyncMock(return_value=None)
+        with patch("backend.scheduler.AsyncSessionLocal") as mock_factory:
+            _setup_session_mock(mock_factory)
 
             with patch(
                 "backend.features.repo_ingestion.router._latest_active_job",
@@ -283,12 +271,10 @@ class TestRefreshSingleRepo:
         """_refresh_single_repo launches run_rescan when no active job exists."""
         mock_repo = MagicMock(id=1, repo_slug="a/b", max_commits_setting=100)
 
-        with patch("backend.scheduler.AsyncSessionLocal"):
-            mock_session = AsyncMock()
-            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session.__aexit__ = AsyncMock(return_value=None)
+        with patch("backend.scheduler.AsyncSessionLocal") as mock_factory:
+            mock_session = _setup_session_mock(mock_factory)
 
-            # Simulate commit/refresh
+            # add() is synchronous — must be MagicMock, not AsyncMock.
             mock_session.add = MagicMock()
             mock_session.commit = AsyncMock()
             mock_session.refresh = AsyncMock()
@@ -315,12 +301,12 @@ class TestRefreshSingleRepo:
     @pytest.mark.asyncio
     async def test_handles_exception_gracefully(self):
         """_refresh_single_repo logs but doesn't propagate exceptions."""
-        mock_repo = MagicMock(id=1, repo_slug="error/repo", max_commits_setting=100)
+        mock_repo = MagicMock(
+            id=1, repo_slug="error/repo", max_commits_setting=100
+        )
 
-        with patch("backend.scheduler.AsyncSessionLocal"):
-            mock_session = AsyncMock()
-            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session.__aexit__ = AsyncMock(return_value=None)
+        with patch("backend.scheduler.AsyncSessionLocal") as mock_factory:
+            mock_session = _setup_session_mock(mock_factory)
 
             mock_session.add = MagicMock()
             mock_session.commit = AsyncMock()
