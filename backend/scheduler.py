@@ -1,6 +1,5 @@
 """
 backend/scheduler.py
-====================
 Background cron-job service that periodically re-ingests active
 repositories to keep dashboards fresh (Issue #387).
 
