@@ -164,5 +164,5 @@ ENABLE_SEMANTIC_ANALYSIS = _parse_bool(os.getenv("ENABLE_SEMANTIC_ANALYSIS"), de
 ENABLE_GRAPHCODEBERT = _parse_bool(os.getenv("ENABLE_GRAPHCODEBERT"), default=False)
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 CORS_ORIGINS = _cors_origins(ENVIRONMENT, os.getenv("CORS_ORIGINS"))
-
 REPO_STORAGE_PATH.mkdir(parents=True, exist_ok=True)
+REFRESH_INTERVAL_HOURS = int(os.getenv("REFRESH_INTERVAL_HOURS", "24"))
