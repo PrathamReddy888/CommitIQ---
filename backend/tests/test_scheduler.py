@@ -1,6 +1,5 @@
 """
 backend/tests/test_scheduler.py
-==============================
 Unit tests for the background cron-job scheduler (Issue #387).
 
 Tests cover:
